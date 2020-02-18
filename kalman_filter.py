@@ -6,8 +6,8 @@ def getKF(init_mean,init_cov=100*np.eye(4)):
                        [0, 1, 0, 1],
                        [0, 0, 1, 0],
                        [0, 0, 0, 1]])
-#    a = 0.03618948
-    a = 0.04
+    a = 0.1
+#    a = -0.04
     tr_offset = np.array([0, a/2 , 0, a])
     
     kf = KalmanFilter(n_dim_state=4,

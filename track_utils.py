@@ -16,7 +16,7 @@ roi2, roi2_init = None,None
 #                    [0, 1, 1, 1, 1, 0],
 #                    [0, 0, 1, 1, 0, 0]],dtype=np.uint8)
 
-kernel = np.ones((5,5))
+kernel = np.ones((3,3))
 ix,iy=0,0
 draw = False
 rad_thresh = 50
@@ -76,25 +76,6 @@ def getROIvid(frame,mask, winName = 'input'):
 
     return None, None
 
-def getROIext(image,winName = 'input'):
-    global img, orig, roi2, roi2_init
-    img = image.copy()
-    orig = image.copy()
-    cv2.namedWindow(winName)
-    cv2.setMouseCallback(winName, selectROI)
-    while True:
-        cv2.imshow(winName, img)
-        if roi is not None:
-            cv2.destroyWindow(winName)
-            return roi
-
-        k = cv2.waitKey(1) & 0xFF
-        if k == ord('q'):
-            cv2.destroyWindow(winName)
-            break
-
-    return roi
-
 
 def getLimits(roi,roi_mask):
     limits = None
@@ -108,8 +89,8 @@ def getLimits(roi,roi_mask):
 
 def applyMorphTransforms(mask):
     global kernel
-    lower = 100
-    upper = 255
+#    lower = 100
+#    upper = 255
     #mask = cv2.inRange(mask, lower, upper)
     # mask = cv2.GaussianBlur(mask, (11, 11), 5)
     # mask = cv2.inRange(mask, lower, upper)
@@ -128,8 +109,6 @@ def applyMorphTransforms2(backProj):
     mask = cv2.GaussianBlur(mask, (11, 11), 5)
     mask = cv2.inRange(mask, lower, upper)
     return mask
-
-
 
 def detectBallThresh(frame,limits):
     global rad_thresh
@@ -162,6 +141,35 @@ def detectBallThresh(frame,limits):
 #        center = (int(M["m10"] / M["m00"]), int(M["m01"] / M["m00"]))
         return (center[0],center[1]), cnts[i]
     else:
+        return None, None
+    
+def detectBallThresh_RGB(frame,limits):
+    global rad_thresh
+    upper = limits[0]
+    lower = limits[1]
+
+    mask = cv2.inRange(frame, lower, upper)
+    mask = applyMorphTransforms(mask)
+    cv2.imshow('mask_threh', mask)
+
+    cnts = cv2.findContours(mask.copy(), cv2.RETR_EXTERNAL,
+                            cv2.CHAIN_APPROX_SIMPLE)[-2]
+    cnts = sorted(cnts, key=cv2.contourArea, reverse=True)
+    flag = False
+    if len(cnts) > 0:
+        for i in range(len(cnts)):
+            hull = cv2.convexHull(cnts[i])
+            (center, radius) = cv2.minEnclosingCircle(hull)
+            if radius < rad_thresh and radius > 10:
+                flag = True
+                break
+            
+        if not flag: # No contour found
+            return None, None
+        else:
+            center = np.uint32(center)
+            return (center[0],center[1]), radius
+    else: # No contour found
         return None, None
 
 def detectBallHB(frame, roiHist):
@@ -217,20 +225,5 @@ def removeBG(frame, fgbg):
     bg_mask = fgbg.apply(frame)
     bg_mask = cv2.erode(bg_mask, np.ones((3, 3)))
     bg_mask = cv2.dilate(bg_mask, np.ones((3, 3)))
-    frame = cv2.bitwise_and(frame, frame, mask=bg_mask)
-    
+    frame = cv2.bitwise_and(frame, frame, mask=bg_mask)    
     return frame
-
-def getHist(roi,mask):
-    roi = cv2.cvtColor(roi,cv2.COLOR_BGR2HSV)    
-    roi_hist = cv2.calcHist([roi],[0,1],mask,[180,256],[0,180,0,256])
-    roi_hist = cv2.normalize(roi_hist, roi_hist, 0, 255, cv2.NORM_MINMAX)
-    # print(roi_hist)
-    return roi_hist
-
-def getMeanROIHist(roi):
-    num_roi = roi.shape[-1]
-
-    mean_hist = np.zeros((180,256))
-    for i in range(num_roi):
-        hist = getHist(roi[:,:,:,i])
