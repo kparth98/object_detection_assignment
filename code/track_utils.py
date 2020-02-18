@@ -2,19 +2,12 @@ import numpy as np
 import argparse
 import cv2
 import math
-from collections import deque
-import matplotlib.pyplot as plt
+#from collections import deque
+#import matplotlib.pyplot as plt
 img = None
 orig = None
 bbox = None
 roi2, roi2_init = None,None
-
-# kernel = np.array([[0, 0, 1, 1, 0, 0],
-#                    [0, 1, 1, 1, 1, 0],
-#                    [1, 1, 1, 1, 1, 1],
-#                    [1, 1, 1, 1, 1, 1],
-#                    [0, 1, 1, 1, 1, 0],
-#                    [0, 0, 1, 1, 0, 0]],dtype=np.uint8)
 
 kernel = np.ones((3,3))
 ix,iy=0,0
@@ -24,9 +17,18 @@ rad_thresh = 50
 def getArguements():
     ap = argparse.ArgumentParser()
     ap.add_argument("-v", "--video",
-                    help="path to the (optional) video file")
+                    help="path to the video file")
+    ap.add_argument("-bg", "--background",
+                    help="path to the extracted background")
+    ap.add_argument("-l", "--limits",
+                    help="path to the rgb threshold limits file")
+    ap.add_argument("-vis", "--visualise",
+                    help="view the frames and the ball detection",action='store_true')
+    ap.add_argument("-s", "--save",
+                    help="save data",action='store_true')
     args = vars(ap.parse_args())
     return args
+
 
 def resize(img,width=400.0):
     r = float(width) / img.shape[0]
@@ -77,23 +79,29 @@ def getROIvid(frame,mask, winName = 'input'):
     return None, None
 
 
-def getLimits(roi,roi_mask):
-    limits = None
+def getLimits_HSV(roi,roi_mask):
     roi = cv2.cvtColor(roi, cv2.COLOR_BGR2HSV)
     h, s, v = cv2.split(roi)
-    print(np.mean(h[roi_mask>0]))
-    print(np.std(h[roi_mask>0]))
     limits = [(int(np.amax(h[roi_mask>0])), int(np.amax(s[roi_mask>0])), int(np.amax(v[roi_mask>0]))), 
               (int(np.amin(h[h>0])), int(np.amin(s[roi_mask>0])), int(np.amin(v[roi_mask>0])))]
     return limits
 
+def getLimits_RGB(roi,roi_mask):
+    b,g,r = cv2.split(roi)
+    b_mean = np.median(b[roi_mask>0])
+    g_mean = np.median(g[roi_mask>0])
+    r_mean = np.median(r[roi_mask>0])
+            
+    b_std = 1.5*np.std(b[roi_mask>0])
+    g_std = 1.5*np.std(g[roi_mask>0])
+    r_std = 1.5*np.std(r[roi_mask>0])
+
+    limits = [(min(int(b_mean+b_std),255), min(int(g_mean+g_std),255), min(int(r_mean+r_std),255)), 
+              (int(b_mean-b_std), int(g_mean-g_std), int(r_mean-r_std))]
+    return limits
+
 def applyMorphTransforms(mask):
     global kernel
-#    lower = 100
-#    upper = 255
-    #mask = cv2.inRange(mask, lower, upper)
-    # mask = cv2.GaussianBlur(mask, (11, 11), 5)
-    # mask = cv2.inRange(mask, lower, upper)
     mask = cv2.dilate(mask, kernel)
     mask = cv2.erode(mask, kernel)
 
@@ -120,8 +128,6 @@ def detectBallThresh(frame,limits):
 
     mask = cv2.inRange(hsv, lower, upper)
     mask = applyMorphTransforms(mask)
-    cv2.imshow('mask_threh', mask)
-
 
     cnts = cv2.findContours(mask.copy(), cv2.RETR_EXTERNAL,
                             cv2.CHAIN_APPROX_SIMPLE)[-2]
@@ -181,8 +187,7 @@ def detectBallHB(frame, roiHist):
     mask = cv2.dilate(mask,np.ones((3,3)))
     mask = cv2.erode(mask, np.ones((3,3)))
 
-    cv2.imshow('backproj2',mask)
-# find the biggest connected contour
+    # find the biggest connected contour
     cnts = cv2.findContours(mask.copy(), cv2.RETR_EXTERNAL,
                             cv2.CHAIN_APPROX_SIMPLE)[-2]
     cnts = sorted(cnts, key=cv2.contourArea, reverse=True)
@@ -203,27 +208,9 @@ def detectBallHB(frame, roiHist):
     else:
         return None, None
 
-def kalmanFilter(meas):
-    pred = np.array([],dtype=np.int)
-    #mp = np.asarray(meas,np.float32).reshape(-1,2,1)  # measurement
-    tp = np.zeros((2, 1), np.float32)  # tracked / prediction
-
-    kalman = cv2.KalmanFilter(4, 2)
-    kalman.measurementMatrix = np.array([[1, 0, 0, 0], [0, 1, 0, 0]], np.float32)
-    kalman.transitionMatrix = np.array([[1, 0, 1, 0], [0, 1, 0, 1], [0, 0, 1, 0], [0, 0, 0, 1]], np.float32)
-    kalman.processNoiseCov = np.array([[1, 0, 0, 0], [0, 1, 0, 0], [0, 0, 1, 0], [0, 0, 0, 1]], np.float32) * 0.03
-    kalman.measurementNoiseCov = np.array([[1, 0], [0, 1]], np.float32) * 0.00003
-    for mp in meas:
-        mp = np.asarray(mp,dtype=np.float32).reshape(2,1)
-        kalman.correct(mp)
-        tp = kalman.predict()
-        np.append(pred,[int(tp[0]),int(tp[1])])
-
-    return pred
-
 def removeBG(frame, fgbg):
     bg_mask = fgbg.apply(frame)
-    bg_mask = cv2.erode(bg_mask, np.ones((3, 3)))
     bg_mask = cv2.dilate(bg_mask, np.ones((3, 3)))
-    frame = cv2.bitwise_and(frame, frame, mask=bg_mask)    
-    return frame
+    bg_mask = cv2.erode(bg_mask, np.ones((5, 5)))
+    frame_fg = cv2.bitwise_and(frame, frame, mask=bg_mask)
+    return frame_fg, bg_mask
