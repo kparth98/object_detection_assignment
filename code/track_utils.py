@@ -1,7 +1,8 @@
 import numpy as np
 import argparse
 import cv2
-import math
+from pykalman import KalmanFilter
+
 #from collections import deque
 #import matplotlib.pyplot as plt
 img = None
@@ -37,6 +38,9 @@ def resize(img,width=400.0):
     return img
 
 def selectROI(event, x, y, flag, param):
+    '''
+        Callback function which returns the coordinates of selected box
+    '''
     global img, draw, orig, bbox, ix,iy
     if event == cv2.EVENT_LBUTTONDOWN:
         ix = x
@@ -57,6 +61,19 @@ def selectROI(event, x, y, flag, param):
         draw = False
 
 def getROIvid(frame,mask, winName = 'input'):
+    '''
+        Function to get region of interest from user via mouse-clicks
+        input: 
+            frame   - image from which ROI is to be obtained
+            mask    - foreground mask
+            winName - title of the window, required by opencv
+        
+        click and drag using mouse to select the ROI
+        
+        output:
+            roi         - selected region of interest from frame
+            roi_mask    - selected region of interest from mask
+    '''
     global img, orig, bbox
     bbox=None
     img = frame.copy()
@@ -80,6 +97,14 @@ def getROIvid(frame,mask, winName = 'input'):
 
 
 def getLimits_HSV(roi,roi_mask):
+    '''
+        Function to obtain limits for HSV thresholding
+        input:
+            roi         - region of interest
+            roi_mask    - binary mask of which points to consider
+        output:
+            limits - threshold in tuple format: (upper, lower)
+    '''
     roi = cv2.cvtColor(roi, cv2.COLOR_BGR2HSV)
     h, s, v = cv2.split(roi)
     limits = [(int(np.amax(h[roi_mask>0])), int(np.amax(s[roi_mask>0])), int(np.amax(v[roi_mask>0]))), 
@@ -87,6 +112,14 @@ def getLimits_HSV(roi,roi_mask):
     return limits
 
 def getLimits_RGB(roi,roi_mask):
+    '''
+        Function to obtain limits for RGB thresholding
+        input:
+            roi         - region of interest
+            roi_mask    - binary mask of which points to consider
+        output:
+            limits - threshold in tuple format: (upper, lower)
+    '''
     b,g,r = cv2.split(roi)
     b_mean = np.median(b[roi_mask>0])
     g_mean = np.median(g[roi_mask>0])
@@ -104,21 +137,20 @@ def applyMorphTransforms(mask):
     global kernel
     mask = cv2.dilate(mask, kernel)
     mask = cv2.erode(mask, kernel)
-
     return mask
 
-def applyMorphTransforms2(backProj):
-    global kernel
-    lower = 50
-    upper = 255
-    mask = cv2.inRange(backProj, lower, upper)
-    mask = cv2.dilate(mask, kernel)
-    mask = cv2.erode(mask, np.ones((3, 3)))
-    mask = cv2.GaussianBlur(mask, (11, 11), 5)
-    mask = cv2.inRange(mask, lower, upper)
-    return mask
-
-def detectBallThresh(frame,limits):
+def detectBallThresh_HSV(frame,limits):
+    '''
+        Function to detect ball by HSV-color thresholding
+        input:
+            frame - image in which the ball is to be detected
+            limits - color range in tuple (upper,lower) format where
+                     upper = [h_max,s_max,v_max] and lower = [h_min,s_min,v_min]
+            rad_thresh - threshold on size of the ball detected
+        output:
+            center - center of the ball
+            radius - radius of the ball
+    '''
     global rad_thresh
     upper = limits[0]
     lower = limits[1]
@@ -149,36 +181,60 @@ def detectBallThresh(frame,limits):
     else:
         return None, None
     
-def detectBallThresh_RGB(frame,limits):
-    global rad_thresh
+def detectBallThresh_RGB(frame,limits, curr_estimate, rad_thresh=[50,10], dist_thresh=10):
+    '''
+        Function to detect ball by RGB-color thresholding
+        input:
+            frame - image in which the ball is to be detected
+            limits - color range in tuple (upper,lower) format where
+                     upper = [b_max,g_max,r_max] and lower = [b_min,g_min,r_min]
+            rad_thresh - threshold on size of the ball detected
+        output:
+            center - center of the ball
+            radius - radius of the ball
+    '''
+#    global rad_thresh
     upper = limits[0]
     lower = limits[1]
 
     mask = cv2.inRange(frame, lower, upper)
     mask = applyMorphTransforms(mask)
-    cv2.imshow('mask_threh', mask)
-
+    
+    # find call contours and sort in decreasing order of area
     cnts = cv2.findContours(mask.copy(), cv2.RETR_EXTERNAL,
                             cv2.CHAIN_APPROX_SIMPLE)[-2]
     cnts = sorted(cnts, key=cv2.contourArea, reverse=True)
     flag = False
+    # largest contour whose minimum enclosing circle has radius within fixed range
     if len(cnts) > 0:
         for i in range(len(cnts)):
             hull = cv2.convexHull(cnts[i])
             (center, radius) = cv2.minEnclosingCircle(hull)
-            if radius < rad_thresh and radius > 10:
-                flag = True
-                break
+            if curr_estimate is None:
+                if radius < rad_thresh[0] and radius > rad_thresh[1]:
+                    flag = True
+                    break
+            else:
+                if np.linalg.norm(np.double(center)-np.double(curr_estimate)) < dist_thresh:
+                    flag = True
+                    break
             
-        if not flag: # No contour found
-            return None, None
-        else:
+        if flag:
             center = np.uint32(center)
             return (center[0],center[1]), radius
-    else: # No contour found
-        return None, None
+        
+    return None, None
 
 def detectBallHB(frame, roiHist):
+    '''
+        Function to detect ball using Histogram Backprojection
+        input:
+            frame - image in which the ball is to be detected
+            roiHist - histogram of the colors of the ball
+        output:
+            center - center of the ball
+            radius - radius of the ball
+    '''
     global rad_thresh,kernel
 
     hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
@@ -187,30 +243,64 @@ def detectBallHB(frame, roiHist):
     mask = cv2.dilate(mask,np.ones((3,3)))
     mask = cv2.erode(mask, np.ones((3,3)))
 
-    # find the biggest connected contour
+    # find the biggest contour with radius with certain range
     cnts = cv2.findContours(mask.copy(), cv2.RETR_EXTERNAL,
                             cv2.CHAIN_APPROX_SIMPLE)[-2]
     cnts = sorted(cnts, key=cv2.contourArea, reverse=True)
     i = 0
+    flag = False
     if len(cnts) > 0:
         for i in range(len(cnts)):
             hull = cv2.convexHull(cnts[i])
             (center, radius) = cv2.minEnclosingCircle(hull)
             if radius < rad_thresh and radius>10:
+                flag=True
                 break
-        M = cv2.moments(hull)
-        if M["m00"] > 0:
-#            center = (int(M["m10"] / M["m00"]), int(M["m01"] / M["m00"]))
+        if flag:
             center = np.uint32(center)
             return (center[0],center[1]), cnts[i]
-        else:
-            return None, None
-    else:
-        return None, None
+
+    return None, None
 
 def removeBG(frame, fgbg):
-    bg_mask = fgbg.apply(frame)
-    bg_mask = cv2.dilate(bg_mask, np.ones((3, 3)))
-    bg_mask = cv2.erode(bg_mask, np.ones((5, 5)))
-    frame_fg = cv2.bitwise_and(frame, frame, mask=bg_mask)
-    return frame_fg, bg_mask
+    '''
+        Function to obtain foreground image and mask
+        input
+            frame - current frame in the video
+            fgbg - object of background subractor class
+        output
+            frame_fg - masked frame
+            fg_mask - foreground mask
+    '''
+    fg_mask = fgbg.apply(frame)
+    fg_mask = cv2.dilate(fg_mask, np.ones((3, 3)))
+    fg_mask = cv2.erode(fg_mask, np.ones((5, 5)))
+    frame_fg = cv2.bitwise_and(frame, frame, mask=fg_mask)
+    return frame_fg, fg_mask
+
+def getKF(init_mean,init_cov=10*np.eye(4)):
+    # state = [x, y, v_x, v_y]
+    tr_mtx = np.array([[1, 0, 1, 0],
+                       [0, 1, 0, 1],
+                       [0, 0, 1, 0],
+                       [0, 0, 0, 1]])
+    a = 0.038
+    tr_offset = np.array([0, a/2 , 0, a])
+    
+    kf = KalmanFilter(n_dim_state=4,
+                      n_dim_obs=4,
+                      transition_matrices=tr_mtx,
+                      transition_offsets=tr_offset,
+                      observation_matrices=tr_mtx,
+                      observation_offsets=tr_offset,
+                      initial_state_mean=init_mean,
+                      initial_state_covariance=0.1*init_cov,
+                      transition_covariance=0.1*init_cov,
+                      observation_covariance=0.5*init_cov)
+    return kf
+
+def updateKF(kf,mean,cov, new_meas=None):
+    if new_meas is None:
+        return kf.filter_update(mean,cov)
+    else:
+        return kf.filter_update(mean,cov,new_meas)
