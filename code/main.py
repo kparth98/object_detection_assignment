@@ -16,18 +16,21 @@ def main():
 
     camera = cv2.VideoCapture(args['video'])
 
-    fgbg = cv2.createBackgroundSubtractorMOG2(history=500, 
-                                              varThreshold=20, 
+    fgbg = cv2.createBackgroundSubtractorMOG2(history=1000, 
+                                              varThreshold=10, 
                                               detectShadows=False)
 
     limits = None
     filtered_center = None
-    measurements_kf = []
     measurements = []
+    frame_width = int(camera.get(3))
+    frame_height = int(camera.get(4))
     
     if args['limits'] is not None:
         limits = np.load(args['limits'])
-        
+    
+    if args['save']:
+        out = cv2.VideoWriter(args['output'], cv2.VideoWriter_fourcc('M','J','P','G'), 20.0, (frame_width,frame_height))
     ## loop over every frame
     i=0
     while(True):
@@ -49,20 +52,25 @@ def main():
         if limits is None:
             roi,roi_mask = track_utils.getROIvid(frame, bg_mask,'input ball')
             limits = track_utils.getLimits_RGB(roi,roi_mask)
-            ball_center, radius = track_utils.detectBallThresh_RGB(frame_fg, 
+            detected_center, radius = track_utils.detectBallThresh_RGB(frame_fg, 
                                                                    limits,
                                                                    None)
         else:
             # detect ball center and radius of the ball
-            ball_center, radius = track_utils.detectBallThresh_RGB(frame_fg, 
+            if i<20: # wait for background subtractor to learn the background
+                detected_center, radius = track_utils.detectBallThresh_RGB(frame_fg, 
                                                                    limits, 
                                                                    None)
-
+            else:
+                detected_center, radius = track_utils.detectBallThresh_RGB(frame_fg, 
+                                                                   limits, 
+                                                                   ball_center)
+    
             if i==1:
                 # get initial estimate of position and velocity of ball
                 # state of KF = [x, y, v_x, v_y]
                 cov = 10*np.eye(4)
-                temp = np.double(ball_center)
+                temp = np.double(detected_center)
                 init_mean = np.array([temp[0],temp[1],
                                       temp[0]-measurements[-1][0],
                                       temp[1]-measurements[-1][1]])
@@ -70,57 +78,60 @@ def main():
                 # initialise Kalman Filter
                 kf = track_utils.getKF(init_mean,cov)
                 filtered_means = init_mean
-                filtered_center = ball_center
+                filtered_center = temp
     
             elif i>1:
                 if radius is not None:
                     # if ball detected, update KF with new measurements
-                    temp = np.double(ball_center)
+                    temp = np.double(detected_center)
                     new_meas = np.array([temp[0],temp[1],
                                          temp[0]-measurements[-1][0],
                                          temp[1]-measurements[-1][1]])
 
                     filtered_means,cov = track_utils.updateKF(kf,filtered_means,cov,new_meas)
-                    print(filtered_means)
                 else:
                     # Else, keep using previous estimates of KF 
                     filtered_means,cov = track_utils.updateKF(kf,filtered_means,cov)
                                     
-                filtered_center = np.uint32(filtered_means[0:2])
+                filtered_center = filtered_means[0:2]
             
             # mark the ball, ball center and KF filtered center on the frame
-            if args['visualise']:
-                if radius is not None: 
-                    cv2.circle(frame, ball_center, int(radius), (255, 255, 0), 2)
-                    cv2.circle(frame, ball_center, 2, (0, 0, 255), -1)
-                if i>0:
-                    cv2.circle(frame, (filtered_center[0],filtered_center[1]), 2, (0, 255,0), -1)
-    
-        
-        measurements.append(np.double(ball_center))
-        if i==0:
-            measurements_kf.append(np.double(ball_center))    
+            
+            
+        if detected_center is not None:
+            ball_center = np.uint32((np.double(detected_center)+np.double(filtered_center))*0.5)
         else:
-            measurements_kf.append(np.double(filtered_center))
+            ball_center = np.uint32(filtered_center)
+
+        if args['visualise']:
+            if track_utils.checkInFrame(ball_center,frame.shape):
+                if radius is not None: 
+                    cv2.circle(frame, (ball_center[0],ball_center[1]), int(radius), (255, 255, 0), 2)
+                cv2.circle(frame, (ball_center[0],ball_center[1]), 2, (0, 0, 255), -1)    
         
-        if i<2:
-            i+=1
+
+        print(ball_center)
+        measurements.append(np.append(np.double(ball_center),radius))
+
+        i+=1
         # show the frame
         if args['visualise']:
-            cv2.imshow('frame',frame)
+            cv2.imshow('frame',cv2.resize(frame,(int(0.7*frame.shape[1]),int(0.7*frame.shape[0]))))
             if cv2.waitKey(5) & 0xFF == ord('q'):
                 break
+        if args['save']:
+            out.write(frame)
     
     camera.release()
-    
+    cv2.destroyAllWindows()
+    if args['save']:
+        out.release()
     if args['save']:
         measurements = np.array(measurements)
+        print(measurements.shape)
         with open('measurements.npy', 'wb') as f:
             np.save(f, measurements)
         
-        measurements_kf = np.array(measurements_kf)
-        with open('measurements_kf.npy', 'wb') as f:
-            np.save(f, measurements_kf)
         with open('limits.npy', 'wb') as f:
             np.save(f, limits)
     

@@ -27,6 +27,8 @@ def getArguements():
                     help="view the frames and the ball detection",action='store_true')
     ap.add_argument("-s", "--save",
                     help="save data",action='store_true')
+    ap.add_argument("-o", "--output",
+                    help="name of output video file")
     args = vars(ap.parse_args())
     return args
 
@@ -181,7 +183,7 @@ def detectBallThresh_HSV(frame,limits):
     else:
         return None, None
     
-def detectBallThresh_RGB(frame,limits, curr_estimate, rad_thresh=[50,10], dist_thresh=10):
+def detectBallThresh_RGB(frame,limits, curr_estimate, rad_thresh=[35,15], dist_thresh=40):
     '''
         Function to detect ball by RGB-color thresholding
         input:
@@ -199,7 +201,6 @@ def detectBallThresh_RGB(frame,limits, curr_estimate, rad_thresh=[50,10], dist_t
 
     mask = cv2.inRange(frame, lower, upper)
     mask = applyMorphTransforms(mask)
-    
     # find call contours and sort in decreasing order of area
     cnts = cv2.findContours(mask.copy(), cv2.RETR_EXTERNAL,
                             cv2.CHAIN_APPROX_SIMPLE)[-2]
@@ -216,8 +217,9 @@ def detectBallThresh_RGB(frame,limits, curr_estimate, rad_thresh=[50,10], dist_t
                     break
             else:
                 if np.linalg.norm(np.double(center)-np.double(curr_estimate)) < dist_thresh:
-                    flag = True
-                    break
+                    if radius < rad_thresh[0] and radius > rad_thresh[1]:
+                        flag = True
+                        break
             
         if flag:
             center = np.uint32(center)
@@ -284,8 +286,8 @@ def getKF(init_mean,init_cov=10*np.eye(4)):
                        [0, 1, 0, 1],
                        [0, 0, 1, 0],
                        [0, 0, 0, 1]])
-    a = 0.038
-    tr_offset = np.array([0, a/2 , 0, a])
+    a = 0.0075
+    tr_offset = np.array([0 , a/2 , 0, a])
     
     kf = KalmanFilter(n_dim_state=4,
                       n_dim_obs=4,
@@ -294,7 +296,7 @@ def getKF(init_mean,init_cov=10*np.eye(4)):
                       observation_matrices=tr_mtx,
                       observation_offsets=tr_offset,
                       initial_state_mean=init_mean,
-                      initial_state_covariance=0.1*init_cov,
+                      initial_state_covariance=init_cov,
                       transition_covariance=0.1*init_cov,
                       observation_covariance=0.5*init_cov)
     return kf
@@ -304,3 +306,10 @@ def updateKF(kf,mean,cov, new_meas=None):
         return kf.filter_update(mean,cov)
     else:
         return kf.filter_update(mean,cov,new_meas)
+
+def checkInFrame(center,frame_size):
+    if center[0]<0 or center[1]<0:
+        return False
+    elif center[0]>frame_size[1] or center[1]>frame_size[0]:
+        return False
+    return True
