@@ -7,6 +7,14 @@
 \usepackage{subcaption}
 \usepackage{float}
 \usepackage{verbatim}
+\usepackage{hyperref}
+\hypersetup{
+    colorlinks=true,
+    linkcolor=blue,
+    filecolor=magenta,
+    urlcolor=cyan,
+}
+
 
 \geometry{margin=1in}
 \title{VMG Assignment: Object detection}
@@ -69,7 +77,8 @@ This code is used to obtain the background from a video, which is taken as the m
 
 \section*{Results}
 The following results were obtained by using \verb|limits.npy| and \verb|background.png| provided in the repository. Note that the parameters for Kalman filter and other morphological operations were NOT tuned using these videos. These videos were picked at random from the rest of the dataset.\\
-The y-coordinate in the plots below is = frame height $-$ y-coordinate of the ball with respect to image coordinate system. The origin of the image coordinate system lies on the top-left corner, but for the purpose of plotting, the origin was shifted to bottom left corner and the y-axis was inverted along with the above mentioned transformation of the data.
+The y-coordinate in the plots below is = frame height $-$ y-coordinate of the ball with respect to image coordinate system. The origin of the image coordinate system lies on the top-left corner, but for the purpose of plotting, the origin was shifted to bottom left corner and the y-axis was inverted along with the above mentioned transformation of the data.\\
+The annotated videos for the following are available at : \href{https://drive.google.com/drive/folders/1XGLOxgiLd4pXo52SBLYhWAA1uuqHfmDX?usp=sharing}{link}
 \begin{figure}[H]
     \centering
     \begin{subfigure}[b]{0.7\textwidth}
@@ -147,7 +156,7 @@ The y-coordinate in the plots below is = frame height $-$ y-coordinate of the ba
      \caption{Results for the video 94026-94206.avi in Set23}
 \end{figure}
 
-The case below shows that these assumptions can give noisy results in some situations, however, it was observed that the assumptions and the tuned parameters worked reasonably well for most videos.
+The case below shows that these assumptions can give noisy results in some situations. However, it was observed that the assumptions and the tuned parameters worked reasonably well for most videos.
 
 \begin{figure}[H]
     \centering
