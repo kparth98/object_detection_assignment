@@ -98,19 +98,21 @@ def main():
             # mark the ball, ball center and KF filtered center on the frame
             
             
-        if detected_center is not None:
+        if detected_center is not None and filtered_center is not None:
             ball_center = np.uint32((np.double(detected_center)+np.double(filtered_center))*0.5)
-        else:
+        elif filtered_center is None:
+            ball_center = np.uint32(detected_center)
+        elif detected_center is None:
             ball_center = np.uint32(filtered_center)
 
-        if args['visualise']:
+        if args['visualise'] or args['output'] is not None:
             if track_utils.checkInFrame(ball_center,frame.shape):
                 if radius is not None: 
                     cv2.circle(frame, (ball_center[0],ball_center[1]), int(radius), (255, 255, 0), 2)
-                cv2.circle(frame, (ball_center[0],ball_center[1]), 2, (0, 0, 255), -1)    
+                cv2.circle(frame, (ball_center[0],ball_center[1]), 4, (0, 0, 255), -1)    
         
 
-        print(ball_center)
+        print(str(ball_center[0])+","+str(ball_center[1]))
         measurements.append(np.append(np.double(ball_center),radius))
 
         i+=1
@@ -128,7 +130,6 @@ def main():
         out.release()
     if args['save']:
         measurements = np.array(measurements)
-        print(measurements.shape)
         with open('measurements.npy', 'wb') as f:
             np.save(f, measurements)
         

@@ -41,7 +41,8 @@ def main():
         if i%step==0:
             agg_frame = cv2.circle(agg_frame, ball_center, int(measurements[i,2]), (255, 255, 0), 2)
         agg_frame = cv2.circle(agg_frame, ball_center, 2, (0, 0, 255), -1)
-        
+    
+    cv2.imwrite(args['output'],agg_frame)
     cv2.imshow('agg frame',agg_frame)
     cv2.waitKey(0)
     cv2.destroyAllWindows()
